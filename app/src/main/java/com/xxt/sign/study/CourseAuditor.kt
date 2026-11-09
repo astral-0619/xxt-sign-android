@@ -68,7 +68,7 @@ class CourseAuditor(
             // 1) 章节目录的已完成图标：最可信，也最省请求
             if (ch.finished) {
                 val n = ch.jobCount.coerceAtLeast(0)
-                inputs.add(ChapterAuditInput(ch.title, ChapterCheck(n, n, 0, 0, fromIcon = true)))
+                inputs.add(ChapterAuditInput(ch.title, ChapterCheck(n, n, 0, 0, fromIcon = true), ch.id))
                 byIcon++
                 return@forEachIndexed
             }
@@ -98,13 +98,19 @@ class CourseAuditor(
                 uT += check.unknownTasks.values.sum()
                 check.otherWorks.forEach { (t, n) -> otherWorkTypes[t] = (otherWorkTypes[t] ?: 0) + n }
             }
-            inputs.add(ChapterAuditInput(ch.title, check))
+            inputs.add(ChapterAuditInput(ch.title, check, ch.id))
         }
 
         val counted = CourseAuditCalculator.audit(course.courseId, course.title, inputs)
         // 分母以平台自报为准：自数会因为「图标直接判完成的章只有 knowledgeJobCount」而偏小
         // （真机上自数 304、平台 392）。对不上时把两个数都打出来，方便查口径。
-        val audit = counted.withPlatformTotals(platformDone, platformTotal)
+        // 最后再叠一遍目录底账：**没被逐卡扫描到的章也一定有 total**，不再整屏「没查到」
+        val audit = counted.withPlatformTotals(platformDone, platformTotal).withDirectoryChapters(chapters)
+        log(
+            "[目录] ${course.title} 任务点按章归集：${audit.chapterRows.size} 章 / ${audit.taskPoints} 个任务点" +
+                "（目录给 ${chapters.size} 章，已完成章 ${audit.chapterRows.count { it.state == ChapterRow.State.DONE }}）",
+            audit.taskPoints > 0
+        )
         if (platformTotal > 0 && platformTotal != counted.taskPoints) {
             log(
                 "[体检] ${course.title} 任务点口径：平台 $platformDone/$platformTotal，" +

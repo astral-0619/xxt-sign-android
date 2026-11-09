@@ -31,7 +31,17 @@
             android:layout_marginTop="4dp"
             android:textColor="@color/muted"
             android:textSize="13sp"
-            tools:text="视频 3/12 · 测验 2/5" />
+            tools:text="任务点 11/392" />
+
+        <!-- 两条进度：刷课（视频/文档）和做题（workA 测验），和课程页同源 -->
+        <TextView
+            android:id="@+id/tvCourseModeProgress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            tools:text="刷课 3/12 · 做题 1/5" />
 
         <com.google.android.material.progressindicator.LinearProgressIndicator
             android:id="@+id/progressCourse"

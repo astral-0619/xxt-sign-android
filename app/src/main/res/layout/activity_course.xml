@@ -60,17 +60,49 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnToggle"
+    <!-- 两个入口：刷课（视频/文档）和做题（workA 测验）。共用进程级互斥，一方跑着另一方禁用 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunCourse"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="刷课"
+            android:textSize="16sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunQuiz"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="做题"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <!-- 两个入口各自一条进度，绝不混着报 -->
+    <TextView
+        android:id="@+id/tvModeProgress"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:layout_marginTop="12dp"
-        android:insetTop="0dp"
-        android:insetBottom="0dp"
-        android:text="开始"
-        android:textSize="16sp" />
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/muted"
+        android:textSize="13sp"
+        tools:text="刷课 3/12 · 做题 1/5" />
 
     <TextView
         android:id="@+id/tvChapterHeader"

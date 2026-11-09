@@ -62,7 +62,7 @@ class ChapterRowAdapter : RecyclerView.Adapter<ChapterRowAdapter.Holder>() {
                 row.state == ChapterRow.State.PARTIAL ->
                     (if (row.videoTasks > 0) "部分完成 · 视频 ${row.videoDone}/${row.videoTasks}" else "进行中") to
                         R.color.primary
-                row.state == ChapterRow.State.UNCHECKED -> "没查到" to R.color.muted
+                // 目录没覆盖到的章也算「未开始」：「没查到」这种兜底文案不再给用户看
                 else -> "未开始" to R.color.muted
             }
             b.tvChapterState.text = label

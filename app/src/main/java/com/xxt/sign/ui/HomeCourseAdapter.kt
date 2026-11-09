@@ -8,7 +8,9 @@ import com.xxt.sign.R
 import com.xxt.sign.databinding.ItemHomeCourseBinding
 import com.xxt.sign.study.CourseAudit
 import com.xxt.sign.study.CourseRunQueue
+import com.xxt.sign.study.RunMode
 import com.xxt.sign.study.StudyCourse
+import com.xxt.sign.study.stageProgress
 
 /** 首页课程行：课程名 + 视频/测验进度 + 状态（人话） */
 class HomeCourseAdapter(
@@ -59,6 +61,16 @@ class HomeCourseAdapter(
                 b.tvCourseNumbers.text = "任务点 ${donePts ?: 0}/$totalPts"
                 b.progressCourse.setProgressCompat(((donePts ?: 0) * 100 / totalPts!!), false)
             }
+
+            // 两个入口各自一条进度：刷课（视频/文档）和做题（workA 测验）
+            val modeText = audit?.let {
+                listOf(
+                    it.stageProgress(RunMode.COURSE).text(RunMode.COURSE.label),
+                    it.stageProgress(RunMode.QUIZ).text(RunMode.QUIZ.label)
+                ).joinToString(" · ")
+            }.orEmpty()
+            b.tvCourseModeProgress.visibility = if (modeText.isBlank()) View.GONE else View.VISIBLE
+            b.tvCourseModeProgress.text = modeText
 
             // 只有真的在跑 / 卡住 / 要你动手时才写一行状态，其余留白
             val (text, color) = when {

@@ -18,6 +18,12 @@ internal object CourseAuditJson {
     private const val K_STATE = "s"
     private const val K_VIDEO_DONE = "vd"
     private const val K_VIDEO_TASKS = "vt"
+    /** 章节 id：归集按它（标题会重名/被改） */
+    private const val K_ID = "id"
+    private const val K_DOC_DONE = "dd"
+    private const val K_DOC_TASKS = "dt"
+    private const val K_QUIZ_DONE = "qd"
+    private const val K_QUIZ_TASKS = "qt"
 
     fun encode(audits: List<CourseAudit>): String {
         val arr = JSONArray()
@@ -32,6 +38,11 @@ internal object CourseAuditJson {
                         .put(K_STATE, r.state.name)
                         .put(K_VIDEO_DONE, r.videoDone)
                         .put(K_VIDEO_TASKS, r.videoTasks)
+                        .put(K_ID, r.chapterId)
+                        .put(K_DOC_DONE, r.documentDone)
+                        .put(K_DOC_TASKS, r.documentTasks)
+                        .put(K_QUIZ_DONE, r.quizDone)
+                        .put(K_QUIZ_TASKS, r.quizTasks)
                 )
             }
             arr.put(
@@ -79,7 +90,12 @@ internal object CourseAuditJson {
                             state = runCatching { ChapterRow.State.valueOf(r.optString(K_STATE)) }
                                 .getOrDefault(ChapterRow.State.UNCHECKED),
                             videoDone = r.optInt(K_VIDEO_DONE),
-                            videoTasks = r.optInt(K_VIDEO_TASKS)
+                            videoTasks = r.optInt(K_VIDEO_TASKS),
+                            chapterId = r.optString(K_ID),
+                            documentDone = r.optInt(K_DOC_DONE),
+                            documentTasks = r.optInt(K_DOC_TASKS),
+                            quizDone = r.optInt(K_QUIZ_DONE),
+                            quizTasks = r.optInt(K_QUIZ_TASKS)
                         )
                     }
                 } ?: emptyList(),

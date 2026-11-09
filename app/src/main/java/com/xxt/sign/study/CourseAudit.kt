@@ -88,7 +88,7 @@ data class CourseAudit(
 fun CourseAudit.withPlatformTotals(done: Int, total: Int): CourseAudit =
     if (total <= 0) this else copy(taskPoints = total, doneTaskPoints = done.coerceIn(0, total))
 
-/** 课程页逐章列表的一行：数据全部来自体检，不额外请求 */
+/** 课程页逐章列表的一行：数据全部来自体检/目录归集，不额外请求 */
 data class ChapterRow(
     val title: String,
     val total: Int,
@@ -96,7 +96,18 @@ data class ChapterRow(
     val state: State,
     /** 视频任务点完成情况，"部分完成（视频 3/5）" 用 */
     val videoDone: Int = 0,
-    val videoTasks: Int = 0
+    val videoTasks: Int = 0,
+    /**
+     * 章节目录里的章节 id（`cur123456`）。
+     * 归集必须按它来：标题会重名、会被老师改字，id 不会。
+     */
+    val chapterId: String = "",
+    /** 文档任务点完成情况（「刷课」入口的另一半） */
+    val documentDone: Int = 0,
+    val documentTasks: Int = 0,
+    /** 章节测验（workA）完成情况（「做题」入口） */
+    val quizDone: Int = 0,
+    val quizTasks: Int = 0
 ) {
     enum class State {
         /** 已完成：该章所有带 jobid 的任务点都完成（不再只看 icon_yiwanc） */
@@ -132,9 +143,140 @@ fun ChapterRow.stateByTaskPoints(): ChapterRow.State = when {
 }
 
 /**
+ * 界面渲染用的状态：**永远不出现「没查到」**。
+ *
+ * 目录页拿到的那一刻每章的任务点个数就归集进体检了（[withDirectoryChapters]），
+ * 所以「没明细」只可能是目录接口也没覆盖到的章 —— 那按「未开始」显示，
+ * 不再给用户看「没查到」这种兜底文案。
+ */
+fun ChapterRow.displayState(): ChapterRow.State {
+    val computed = stateByTaskPoints()
+    return if (computed == ChapterRow.State.UNCHECKED) ChapterRow.State.TODO else computed
+}
+
+/**
+ * 章节目录（`studentcourse` 页）→ 逐章任务点底账。
+ *
+ * 目录页每章自带 `input.knowledgeJobCount`（任务点个数）和 `icon_yiwanc`（是否全完成），
+ * **一次请求都不多花**就能把「每章几个任务点、完成几个、什么状态」归集出来：
+ *  - 已完成的章：done = total = 目录给的个数
+ *  - 未完成的章：done = 0，状态「未开始」
+ *  - 未开放的章：状态「未开放」
+ *
+ * 逐卡扫描过的章（[CourseAuditCalculator] 算出来的行）优先级更高，原样保留数字；
+ * 没扫描到的章用目录底账补上 —— 这就是「不再满屏没查到」的根子。
+ *
+ * 按 [ChapterRow.chapterId] 归集；同一个 audit 反复调用结果完全一致（幂等），重跑不重复加行。
+ */
+fun CourseAudit.withDirectoryChapters(chapters: List<StudyChapter>): CourseAudit {
+    if (chapters.isEmpty()) return this
+    val consumed = BooleanArray(chapterRows.size)
+    val merged = ArrayList<ChapterRow>(chapters.size)
+
+    for (ch in chapters) {
+        val hit = chapterRows.indices.firstOrNull { i ->
+            !consumed[i] && matchesChapter(chapterRows[i], ch)
+        }
+        val existing = hit?.let { chapterRows[it] }
+        if (hit != null) consumed[hit] = true
+
+        val directoryTotal = ch.jobCount.coerceAtLeast(0)
+        val fromCheck = existing != null &&
+            (existing.total > 0 || existing.done > 0 || existing.state == ChapterRow.State.LOCKED)
+        merged.add(
+            if (fromCheck) {
+                val e = existing!!
+                // 图标说全完成时以图标为准（文档/测验的 isPassed 不回填，逐卡数会偏小）
+                val done = if (ch.finished) maxOf(e.done, e.total) else e.done
+                e.copy(
+                    chapterId = ch.id,
+                    title = e.title.ifBlank { ch.title },
+                    total = if (e.total > 0) e.total else directoryTotal,
+                    done = done,
+                    state = when {
+                        ch.needUnlock && e.total <= 0 -> ChapterRow.State.LOCKED
+                        ch.finished -> ChapterRow.State.DONE
+                        else -> e.state
+                    }
+                )
+            } else {
+                val total = directoryTotal
+                ChapterRow(
+                    chapterId = ch.id,
+                    title = ch.title.ifBlank { existing?.title.orEmpty() },
+                    total = total,
+                    done = if (ch.finished) total else 0,
+                    state = when {
+                        ch.needUnlock -> ChapterRow.State.LOCKED
+                        ch.finished -> ChapterRow.State.DONE
+                        else -> ChapterRow.State.TODO
+                    }
+                )
+            }
+        )
+    }
+    // 目录里没有的章（缓存太旧/转班了）原样排在后面，不丢数据
+    chapterRows.forEachIndexed { i, r -> if (!consumed[i]) merged.add(r) }
+
+    val rowTotal = merged.sumOf { it.total }
+    val rowDone = merged.sumOf { it.done }
+    // 分母取两者更大：平台自报的 392 要保住；平台口径没拿到时（自数 304）用目录归集的补上
+    val total = maxOf(taskPoints, rowTotal)
+    val donePoints = when {
+        checkedChapters <= 0 -> rowDone
+        else -> doneTaskPoints
+    }.coerceIn(0, maxOf(total, 0))
+
+    return copy(
+        chapterRows = merged,
+        taskPoints = total,
+        doneTaskPoints = donePoints,
+        chapters = maxOf(this.chapters, merged.size),
+        rowsVersion = CourseAudit.ROWS_VERSION
+    )
+}
+
+/** 这一行是不是这一章：优先按 id，老数据没 id 才退回标题 */
+private fun matchesChapter(row: ChapterRow, chapter: StudyChapter): Boolean = when {
+    row.chapterId.isNotBlank() || chapter.id.isNotBlank() -> row.chapterId == chapter.id
+    else -> row.title == chapter.title
+}
+
+/**
+ * 一个入口的进度（首页卡片上「刷课」「做题」两条就靠它）。
+ *
+ * [known] = 逐卡体检扫过、知道分母；否则只知道还差多少（[pending]），界面就说「还差 N」。
+ */
+data class StageProgress(val done: Int, val total: Int, val pending: Int) {
+    val known: Boolean get() = total > 0
+
+    fun text(label: String): String = when {
+        known -> "$label $done/$total"
+        pending > 0 -> "$label 还差 $pending"
+        else -> "$label 没待做"
+    }
+}
+
+/** 刷课 = 视频 + 文档；做题 = workA 章节测验。两个入口各自一条进度，绝不混着报 */
+fun CourseAudit.stageProgress(mode: RunMode): StageProgress = when (mode) {
+    RunMode.COURSE -> StageProgress(
+        done = chapterRows.sumOf { it.videoDone + it.documentDone },
+        total = chapterRows.sumOf { it.videoTasks + it.documentTasks },
+        pending = videoPending + documentPending
+    )
+    RunMode.QUIZ -> StageProgress(
+        done = chapterRows.sumOf { it.quizDone },
+        total = chapterRows.sumOf { it.quizTasks },
+        pending = quizPending
+    )
+}
+
+/**
  * 视频阶段逐章回写：把这一章的视频 done/total 写进体检行。
  *
  * 为什么需要它：体检只跑一次，而视频是一章一章刷的；用户要看的是「刷到哪、哪章绿」。
+ * 回写只动「视频」那两个数，**不把整章的任务点数改小**：
+ * 一章可能有 2 个视频 + 2 个文档，视频刷完不能让这章变成 2 个任务点的已完成。
  * 返回 null 表示没变化（或没有这一行），调用方可以省掉一次落盘。
  */
 fun CourseAudit.withChapterVideoProgress(
@@ -145,18 +287,25 @@ fun CourseAudit.withChapterVideoProgress(
     val index = chapterRows.indexOfFirst { it.title == chapterTitle }
     if (index < 0) return null
     val old = chapterRows[index]
-    val safeTotal = if (total > 0) total else done
-    val safeDone = done.coerceIn(0, maxOf(safeTotal, 0))
-    if (old.total == safeTotal && old.done == safeDone) return null
+    val videoTasks = if (total > 0) total else done
+    val videoDone = done.coerceIn(0, maxOf(videoTasks, 0))
+    // 整章分母只增不减：目录归集出来的任务点数不能被视频数盖小
+    val newTotal = maxOf(old.total, videoTasks)
+    val newDone = maxOf(old.done, videoDone).coerceAtMost(newTotal)
+    if (old.total == newTotal && old.done == newDone &&
+        old.videoDone == videoDone && old.videoTasks == videoTasks
+    ) {
+        return null
+    }
 
     val rows = chapterRows.toMutableList()
     rows[index] = old.copy(
-        done = safeDone,
-        total = safeTotal,
-        videoDone = safeDone,
-        videoTasks = safeTotal
+        done = newDone,
+        total = newTotal,
+        videoDone = videoDone,
+        videoTasks = videoTasks
     )
-    var donePoints = (doneTaskPoints + (safeDone - old.done)).coerceAtLeast(0)
+    var donePoints = (doneTaskPoints + (newDone - old.done)).coerceAtLeast(0)
     if (taskPoints > 0) donePoints = donePoints.coerceAtMost(taskPoints)
     return copy(chapterRows = rows, doneTaskPoints = donePoints, rowsVersion = CourseAudit.ROWS_VERSION)
 }
@@ -164,7 +313,9 @@ fun CourseAudit.withChapterVideoProgress(
 /** 单章的检查输入：这章的任务点检查结果 */
 data class ChapterAuditInput(
     val chapterTitle: String,
-    val check: ChapterCheck?
+    val check: ChapterCheck?,
+    /** 章节目录里的 id，归集/回写按它来（老调用方不传也行） */
+    val chapterId: String = ""
 )
 
 /**
@@ -191,13 +342,22 @@ object CourseAuditCalculator {
         for (ch in chapters) {
             val check = ch.check
             if (check == null) {
-                rows.add(ChapterRow(ch.chapterTitle, 0, 0, ChapterRow.State.UNCHECKED))
+                rows.add(
+                    ChapterRow(
+                        ch.chapterTitle, 0, 0, ChapterRow.State.UNCHECKED, chapterId = ch.chapterId
+                    )
+                )
                 gaps.add(CourseAudit.Gap(CourseAudit.Kind.UNKNOWN, ch.chapterTitle, "这章没检查到，可能没开放"))
                 continue
             }
             if (check.notOpen) {
                 checked++
-                rows.add(ChapterRow(ch.chapterTitle, check.allTasks, check.allDone, ChapterRow.State.LOCKED))
+                rows.add(
+                    ChapterRow(
+                        ch.chapterTitle, check.allTasks, check.allDone, ChapterRow.State.LOCKED,
+                        chapterId = ch.chapterId
+                    )
+                )
                 gaps.add(CourseAudit.Gap(CourseAudit.Kind.HUMAN, ch.chapterTitle, "章节未开放"))
                 humanPending += (check.allTasks - check.allDone).coerceAtLeast(1)
                 taskPoints += check.allTasks
@@ -207,7 +367,11 @@ object CourseAuditCalculator {
 
             // 卡片没解析到但章节标了有任务点：不知道真实进度，别当「未开始」也不虚增分母
             if (check.scanFailed) {
-                rows.add(ChapterRow(ch.chapterTitle, 0, 0, ChapterRow.State.UNCHECKED))
+                rows.add(
+                    ChapterRow(
+                        ch.chapterTitle, 0, 0, ChapterRow.State.UNCHECKED, chapterId = ch.chapterId
+                    )
+                )
                 gaps.add(
                     CourseAudit.Gap(CourseAudit.Kind.UNKNOWN, ch.chapterTitle, "这章任务点没解析到，进度未知")
                 )
@@ -230,7 +394,12 @@ object CourseAuditCalculator {
                     done = check.allDone,
                     state = state,
                     videoDone = check.videoDone,
-                    videoTasks = check.videoTasks
+                    videoTasks = check.videoTasks,
+                    chapterId = ch.chapterId,
+                    documentDone = check.documentDone,
+                    documentTasks = check.documentTasks,
+                    quizDone = check.quizDone,
+                    quizTasks = check.quizTasks
                 )
             )
             if (check.allComplete) continue
